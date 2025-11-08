@@ -10,6 +10,10 @@ import {
   CfnVPC,
   CfnVPCGatewayAttachment,
 } from "aws-cdk-lib/aws-ec2";
+import { CfnEndpoint } from "aws-cdk-lib/aws-events";
+import { CfnGateway } from "aws-cdk-lib/aws-iotsitewise";
+import { CfnVpcEndpoint } from "aws-cdk-lib/aws-opensearchserverless";
+import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";
 
 interface NetworkConstructProps {
@@ -29,26 +33,10 @@ export class NetworkConstruct extends Construct {
     const stack = Stack.of(this);
 
     const vpc = new CfnVPC(this, `${envName}-vpc`, {
-      //   vpcName: `${envName}-vpc`,
       enableDnsHostnames: true,
       enableDnsSupport: true,
       cidrBlock: vpcCidr,
       tags: [{ key: "Name", value: `${envName}-vpc` }],
-      //   ipAddresses: IpAddresses.cidr(vpcCidr),
-      //   maxAzs: maxAzs,
-      //   natGateways: natGateways,
-      //   subnetConfiguration: [
-      //     {
-      //       cidrMask: 19,
-      //       name: `${envName}-public-subnet`,
-      //       subnetType: SubnetType.PUBLIC,
-      //     },
-      //     {
-      //       cidrMask: 20,
-      //       name: `${envName}-private-subnet`,
-      //       subnetType: SubnetType.PRIVATE_WITH_EGRESS,
-      //     },
-      //   ],
     });
 
     // internet gateway
@@ -176,9 +164,17 @@ export class NetworkConstruct extends Construct {
     });
 
     // Add Vpc Endpoints if needed
-    // vpc.addGatewayEndpoint(`${envName}-s3-endpoint`, {
-    //   service: GatewayVpcEndpointAwsService.S3,
-    //   subnets: [{ subnets: vpc.privateSubnets }],
+    new CfnVpcEndpoint(this, `${envName}-s3-endpoint`, {
+      vpcId: vpc.ref,
+      name: `${envName}-s3-endpoint`,
+      subnetIds: privateSubnets.map((subnet) => subnet.ref),
+    });
+
+    // Create DynamoDB Gateway Endpoint (optional)
+    // new CfnVpcEndpoint(this, `${envName}-dynamodb-endpoint`, {
+    //   name: `${envName}-dynamodb-endpoint`,
+    //   vpcId: vpc.ref,
+    //   subnetIds: privateSubnets.map((subnet) => subnet.ref),
     // });
 
     // add DynamoDB VPC endpoint if needed
@@ -189,6 +185,21 @@ export class NetworkConstruct extends Construct {
 
     new CfnOutput(this, `${envName}-VpcId`, {
       value: vpc.ref,
+    });
+
+    new StringParameter(this, `${envName}-vpc-id-ssm`, {
+      parameterName: `/network/${envName}/vpc-id`,
+      stringValue: vpc.ref,
+    });
+
+    new StringParameter(this, `${envName}-private-subnets`, {
+      parameterName: `/network/${envName}/private-subnet-ids`,
+      stringValue: privateSubnets.map((subnet) => subnet.ref).join(","),
+    });
+
+    new StringParameter(this, `${envName}-public-subnets`, {
+      parameterName: `/network/${envName}/public-subnet-ids`,
+      stringValue: publicSubnets.map((subnet) => subnet.ref).join(","),
     });
   }
 }
