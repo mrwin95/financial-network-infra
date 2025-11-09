@@ -1,6 +1,19 @@
 import { CfnSecurityGroup, CfnSecurityGroupIngress } from "aws-cdk-lib/aws-ec2";
-import { CfnRole } from "aws-cdk-lib/aws-iam";
-import { CfnAddon, CfnCluster, CfnNodegroup } from "aws-cdk-lib/aws-eks";
+import {
+  AccountPrincipal,
+  CfnOIDCProvider,
+  CfnRole,
+  ManagedPolicy,
+  Role,
+  ServicePrincipal,
+} from "aws-cdk-lib/aws-iam";
+import {
+  CfnAccessEntry,
+  CfnAddon,
+  CfnCluster,
+  CfnNodegroup,
+  CfnPodIdentityAssociation,
+} from "aws-cdk-lib/aws-eks";
 import { Construct } from "constructs";
 import { CfnOutput } from "aws-cdk-lib";
 
@@ -113,6 +126,10 @@ export class EksConstruct extends Construct {
     const cluster = new CfnCluster(this, `${envName}-eks-cluster`, {
       name: `${envName}-eks-cluster`,
       roleArn: eksRole.attrArn,
+      accessConfig: {
+        authenticationMode: "API_AND_CONFIG_MAP",
+        bootstrapClusterCreatorAdminPermissions: true,
+      },
       resourcesVpcConfig: {
         subnetIds: privateSubnetIds,
         securityGroupIds: [planeSecurityGroup.ref],
@@ -122,13 +139,58 @@ export class EksConstruct extends Construct {
       //   kubernetesNetworkConfig: {
       //     serviceIpv4Cidr: "10.10.0.0/16",
       //   },
-      version: eksVersion || "1.32",
+      version: eksVersion || "1.34",
       tags: [{ key: "Name", value: `${envName}-eks-cluster` }],
     });
 
+    // cluster.deletionProtection = true;
+
+    // const oidcIssuer = Fn.select(
+    //   1,
+    //   Fn.split("https://", cluster.attrOpenIdConnectIssuerUrl)
+    // );
+
+    // const oidcProvider = new CfnOIDCProvider(this, `${envName}-eks-oidc`, {
+    //   url: oidcIssuer,
+    //   clientIdList: ["sts.amazonaws.com"],
+    //   thumbprintList: ["9e99a48a9960b14926bb7f3b02e22da0afd10df6"],
+    // });
+
+    // oidcProvider.addDependency(cluster);
+
+    // const appPodRole = new Role(this, `${envName}-eks-app-pod-role`, {
+    //   roleName: `${envName}-eks-app-pod-role`,
+    //   assumedBy: new ServicePrincipal("pods.eks.amazonaws.com"), // ✅ No OIDC
+    //   description: "IAM Role for Pods using EKS Pod Identity",
+    //   managedPolicies: [
+    //     ManagedPolicy.fromAwsManagedPolicyName("AmazonS3ReadOnlyAccess"),
+    //   ],
+    // });
+
+    // Link kuberte SA to IAM role
+    // const association = new CfnPodIdentityAssociation(
+    //   this,
+    //   `${envName}-eks-pod-identity`,
+    //   {
+    //     clusterName: cluster.ref!,
+    //     roleArn: appPodRole.roleArn,
+    //     // namespace and service account name can be anything, just an example
+    //     namespace: "default",
+    //     serviceAccount: "my-app-sa",
+    //   }
+    // );
+
+    // association.addDependency(cluster);
+
+    const amiType =
+      eksVersion && parseFloat(eksVersion) >= 1.33
+        ? "AL2023_X86_64_STANDARD"
+        : "AL2_x86_64";
     // create node group
 
     const nodeGroup = new CfnNodegroup(this, `${envName}-eks-node-group`, {
+      nodegroupName: `${envName}-eks-node-group`,
+      version: eksVersion || "1.32",
       clusterName: cluster.ref,
       nodeRole: nodeRole.attrArn,
       subnets: privateSubnetIds,
@@ -138,12 +200,58 @@ export class EksConstruct extends Construct {
         minSize: 2,
       },
       instanceTypes: ["t3.medium"],
-      amiType: "AL2023_X86_64_STANDARD",
+      amiType,
       diskSize: 20,
       tags: { Environment: envName },
     });
 
     nodeGroup.addDependency(cluster);
+
+    const devOpsRole = new Role(this, `${envName}-devops-role`, {
+      roleName: `${envName}-devops-role`,
+      assumedBy: new AccountPrincipal(cluster.stack.account),
+      managedPolicies: [
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSClusterPolicy"),
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSServicePolicy"),
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSWorkerNodePolicy"),
+      ],
+      description:
+        "Allows DevOps engineers to access the EKS cluster via AccessEntry",
+    });
+    const accessEntry = new CfnAccessEntry(
+      this,
+      `${envName}-devops-access-entry`,
+      {
+        clusterName: cluster.attrId, // not cluster.ref
+        principalArn: devOpsRole.roleArn,
+        type: "STANDARD",
+      }
+    );
+
+    accessEntry.addDependency(cluster);
+
+    const podIdentity = new CfnPodIdentityAssociation(
+      this,
+      "EmailServicePodIdentity",
+      {
+        clusterName: cluster.attrId, // use actual name
+        roleArn: "arn:aws:iam::792248914698:role/EmailServicePodRole",
+        namespace: "default",
+        serviceAccount: "email-service-sa",
+      }
+    );
+
+    // Ensure it runs after cluster is ready
+    podIdentity.addDependency(cluster);
+
+    // policy association dependency on cluster
+
+    // new CfnPodIdentityAssociation(this, "EmailServicePodIdentity", {
+    //   clusterName: cluster.ref,
+    //   roleArn: "arn:aws:iam::792248914698:role/EmailServicePodRole",
+    //   namespace: "default",
+    //   serviceAccount: "email-service-sa",
+    // });
 
     //Core EKS addons
 
@@ -164,7 +272,7 @@ export class EksConstruct extends Construct {
     const kubeProxyAddon = new CfnAddon(this, `${envName}-kube-proxy-addon`, {
       addonName: "kube-proxy",
       clusterName: cluster.ref,
-      addonVersion: "v1.31.10-eksbuild.12",
+      addonVersion: "v1.32.6-eksbuild.12",
       resolveConflicts: "OVERWRITE",
     });
 
@@ -184,11 +292,12 @@ export class EksConstruct extends Construct {
       }
     );
 
+    // association.addDependency(podIdentityAddon);
     vpcCniAddon.addDependency(cluster);
     corednsAddon.addDependency(cluster);
     kubeProxyAddon.addDependency(cluster);
     ebsCsiAddon.addDependency(cluster);
-    podIdentityAddon.addDependency(cluster);
+    // podIdentityAddon.addDependency(cluster);
 
     new CfnOutput(this, `${envName}-eks-cluster-name`, { value: cluster.ref });
     new CfnOutput(this, `${envName}-eks-node-group-name`, {
