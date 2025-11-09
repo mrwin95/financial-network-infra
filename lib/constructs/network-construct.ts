@@ -10,8 +10,6 @@ import {
   CfnVPC,
   CfnVPCGatewayAttachment,
 } from "aws-cdk-lib/aws-ec2";
-import { CfnEndpoint } from "aws-cdk-lib/aws-events";
-import { CfnGateway } from "aws-cdk-lib/aws-iotsitewise";
 import { CfnVpcEndpoint } from "aws-cdk-lib/aws-opensearchserverless";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { Construct } from "constructs";

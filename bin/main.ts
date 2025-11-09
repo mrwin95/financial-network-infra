@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as cdk from "aws-cdk-lib";
 import { VpcStack } from "../lib/vpc-stack";
+import { EksStack } from "../lib/eks-stack";
 
 const app = new cdk.App();
 
@@ -16,5 +17,10 @@ new VpcStack(app, "QAVpcStack", {
 
 new VpcStack(app, "ProdVpcStack", {
   envName: "prod",
+  env: { region: "ap-northeast-1" },
+});
+
+new EksStack(app, "DevEksStack", {
+  envName: "dev",
   env: { region: "ap-northeast-1" },
 });
