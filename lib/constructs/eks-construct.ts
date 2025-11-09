@@ -1,6 +1,6 @@
 import { CfnSecurityGroup, CfnSecurityGroupIngress } from "aws-cdk-lib/aws-ec2";
 import { CfnRole } from "aws-cdk-lib/aws-iam";
-import { CfnCluster, CfnNodegroup } from "aws-cdk-lib/aws-eks";
+import { CfnAddon, CfnCluster, CfnNodegroup } from "aws-cdk-lib/aws-eks";
 import { Construct } from "constructs";
 import { CfnOutput } from "aws-cdk-lib";
 
@@ -122,7 +122,7 @@ export class EksConstruct extends Construct {
       //   kubernetesNetworkConfig: {
       //     serviceIpv4Cidr: "10.10.0.0/16",
       //   },
-      version: eksVersion || "1.31",
+      version: eksVersion || "1.32",
       tags: [{ key: "Name", value: `${envName}-eks-cluster` }],
     });
 
@@ -144,6 +144,51 @@ export class EksConstruct extends Construct {
     });
 
     nodeGroup.addDependency(cluster);
+
+    //Core EKS addons
+
+    const vpcCniAddon = new CfnAddon(this, `${envName}-vpc-cni-addon`, {
+      addonName: "vpc-cni",
+      clusterName: cluster.ref,
+      addonVersion: "v1.20.4-eksbuild.2",
+      resolveConflicts: "OVERWRITE",
+    });
+
+    const corednsAddon = new CfnAddon(this, `${envName}-core-dns-addon`, {
+      addonName: "coredns",
+      clusterName: cluster.ref,
+      addonVersion: "v1.11.4-eksbuild.24",
+      resolveConflicts: "OVERWRITE",
+    });
+
+    const kubeProxyAddon = new CfnAddon(this, `${envName}-kube-proxy-addon`, {
+      addonName: "kube-proxy",
+      clusterName: cluster.ref,
+      addonVersion: "v1.31.10-eksbuild.12",
+      resolveConflicts: "OVERWRITE",
+    });
+
+    const ebsCsiAddon = new CfnAddon(this, `${envName}-ebs-csi-addon`, {
+      addonName: "aws-ebs-csi-driver",
+      clusterName: cluster.ref,
+      resolveConflicts: "OVERWRITE",
+    });
+
+    const podIdentityAddon = new CfnAddon(
+      this,
+      `${envName}-pod-identity-addon`,
+      {
+        addonName: "eks-pod-identity-agent",
+        clusterName: cluster.ref,
+        resolveConflicts: "OVERWRITE",
+      }
+    );
+
+    vpcCniAddon.addDependency(cluster);
+    corednsAddon.addDependency(cluster);
+    kubeProxyAddon.addDependency(cluster);
+    ebsCsiAddon.addDependency(cluster);
+    podIdentityAddon.addDependency(cluster);
 
     new CfnOutput(this, `${envName}-eks-cluster-name`, { value: cluster.ref });
     new CfnOutput(this, `${envName}-eks-node-group-name`, {
