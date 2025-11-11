@@ -167,30 +167,15 @@ export class EksConstruct extends Construct {
     //   ],
     // });
 
-    // Link kuberte SA to IAM role
-    // const association = new CfnPodIdentityAssociation(
-    //   this,
-    //   `${envName}-eks-pod-identity`,
-    //   {
-    //     clusterName: cluster.ref!,
-    //     roleArn: appPodRole.roleArn,
-    //     // namespace and service account name can be anything, just an example
-    //     namespace: "default",
-    //     serviceAccount: "my-app-sa",
-    //   }
-    // );
-
-    // association.addDependency(cluster);
-
     const amiType =
-      eksVersion && parseFloat(eksVersion) >= 1.33
+      parseFloat(eksVersion || "1.34") >= 1.33
         ? "AL2023_X86_64_STANDARD"
         : "AL2_x86_64";
     // create node group
 
     const nodeGroup = new CfnNodegroup(this, `${envName}-eks-node-group`, {
       nodegroupName: `${envName}-eks-node-group`,
-      version: eksVersion || "1.32",
+      version: eksVersion || "1.34",
       clusterName: cluster.ref,
       nodeRole: nodeRole.attrArn,
       subnets: privateSubnetIds,
@@ -209,9 +194,9 @@ export class EksConstruct extends Construct {
 
     const devOpsRole = new Role(this, `${envName}-devops-role`, {
       roleName: `${envName}-devops-role`,
-      assumedBy: new AccountPrincipal(cluster.stack.account),
+      assumedBy: new ServicePrincipal("eks.amazonaws.com"),
       managedPolicies: [
-        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSClusterPolicy"),
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSClusterAdminPolicy"),
         ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSServicePolicy"),
         ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSWorkerNodePolicy"),
       ],
@@ -222,7 +207,7 @@ export class EksConstruct extends Construct {
       this,
       `${envName}-devops-access-entry`,
       {
-        clusterName: cluster.attrId, // not cluster.ref
+        clusterName: cluster.ref, // not cluster.ref
         principalArn: devOpsRole.roleArn,
         type: "STANDARD",
       }
@@ -230,28 +215,40 @@ export class EksConstruct extends Construct {
 
     accessEntry.addDependency(cluster);
 
-    const podIdentity = new CfnPodIdentityAssociation(
+    // const role = new Role(this, `${envName}-ses-service-name`, {
+    //   roleName: `${envName}-ses-service-name`,
+    //   assumedBy: new ServicePrincipal("pods.eks.amazonaws.com"),
+    //   managedPolicies: [
+    //     ManagedPolicy.fromAwsManagedPolicyName("AmazonSESFullAccess"),
+    //   ],
+    // });
+
+    // ---- Pod Identity agent add-on ----
+    const podIdentityAddon = new CfnAddon(
       this,
-      "EmailServicePodIdentity",
+      `${envName}-pod-identity-addon`,
       {
-        clusterName: cluster.attrId, // use actual name
-        roleArn: "arn:aws:iam::792248914698:role/EmailServicePodRole",
-        namespace: "default",
-        serviceAccount: "email-service-sa",
+        addonName: "eks-pod-identity-agent",
+        clusterName: cluster.ref,
+        resolveConflicts: "OVERWRITE",
       }
     );
+    podIdentityAddon.addDependency(cluster);
+
+    // const podAssociation = new CfnPodIdentityAssociation(
+    //   this,
+    //   `${envName}-ses-service-pod-identity`,
+    //   {
+    //     clusterName: cluster.ref,
+    //     namespace: "default",
+    //     serviceAccount: "ses-service-sa",
+    //     roleArn: role.roleArn,
+    //   }
+    // );
+    // podAssociation.addDependency(podIdentityAddon);
 
     // Ensure it runs after cluster is ready
-    podIdentity.addDependency(cluster);
-
-    // policy association dependency on cluster
-
-    // new CfnPodIdentityAssociation(this, "EmailServicePodIdentity", {
-    //   clusterName: cluster.ref,
-    //   roleArn: "arn:aws:iam::792248914698:role/EmailServicePodRole",
-    //   namespace: "default",
-    //   serviceAccount: "email-service-sa",
-    // });
+    // podIdentity.addDependency(cluster);
 
     //Core EKS addons
 
@@ -282,22 +279,10 @@ export class EksConstruct extends Construct {
       resolveConflicts: "OVERWRITE",
     });
 
-    const podIdentityAddon = new CfnAddon(
-      this,
-      `${envName}-pod-identity-addon`,
-      {
-        addonName: "eks-pod-identity-agent",
-        clusterName: cluster.ref,
-        resolveConflicts: "OVERWRITE",
-      }
-    );
-
-    // association.addDependency(podIdentityAddon);
     vpcCniAddon.addDependency(cluster);
     corednsAddon.addDependency(cluster);
     kubeProxyAddon.addDependency(cluster);
     ebsCsiAddon.addDependency(cluster);
-    // podIdentityAddon.addDependency(cluster);
 
     new CfnOutput(this, `${envName}-eks-cluster-name`, { value: cluster.ref });
     new CfnOutput(this, `${envName}-eks-node-group-name`, {
