@@ -21,7 +21,6 @@ interface EksConstructProps {
   envName: string;
   vpcId: string;
   privateSubnetIds: string[];
-  //   publicSubnetIds?: string[];
   eksVersion?: string;
 }
 
@@ -139,7 +138,7 @@ export class EksConstruct extends Construct {
       //   kubernetesNetworkConfig: {
       //     serviceIpv4Cidr: "10.10.0.0/16",
       //   },
-      version: eksVersion || "1.34",
+      version: eksVersion || "1.33",
       tags: [{ key: "Name", value: `${envName}-eks-cluster` }],
     });
 
@@ -168,14 +167,14 @@ export class EksConstruct extends Construct {
     // });
 
     const amiType =
-      parseFloat(eksVersion || "1.34") >= 1.33
-        ? "AL2023_X86_64_STANDARD"
-        : "AL2_x86_64";
+      parseFloat(eksVersion || "1.33") >= 1.33
+        ? "BOTTLEROCKET_x86_64"
+        : "AL2023_X86_64_STANDARD";
     // create node group
 
     const nodeGroup = new CfnNodegroup(this, `${envName}-eks-node-group`, {
       nodegroupName: `${envName}-eks-node-group`,
-      version: eksVersion || "1.34",
+      version: eksVersion || "1.33",
       clusterName: cluster.ref,
       nodeRole: nodeRole.attrArn,
       subnets: privateSubnetIds,
@@ -196,32 +195,35 @@ export class EksConstruct extends Construct {
       roleName: `${envName}-devops-role`,
       assumedBy: new ServicePrincipal("eks.amazonaws.com"),
       managedPolicies: [
-        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSClusterAdminPolicy"),
+        ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSClusterPolicy"),
         ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSServicePolicy"),
         ManagedPolicy.fromAwsManagedPolicyName("AmazonEKSWorkerNodePolicy"),
       ],
       description:
         "Allows DevOps engineers to access the EKS cluster via AccessEntry",
     });
+
     const accessEntry = new CfnAccessEntry(
       this,
       `${envName}-devops-access-entry`,
       {
         clusterName: cluster.ref, // not cluster.ref
+        // username: `${envName}-wadmin`,
         principalArn: devOpsRole.roleArn,
         type: "STANDARD",
+        accessPolicies: [
+          {
+            policyArn:
+              "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+            accessScope: {
+              type: "cluster",
+            },
+          },
+        ],
       }
     );
 
     accessEntry.addDependency(cluster);
-
-    // const role = new Role(this, `${envName}-ses-service-name`, {
-    //   roleName: `${envName}-ses-service-name`,
-    //   assumedBy: new ServicePrincipal("pods.eks.amazonaws.com"),
-    //   managedPolicies: [
-    //     ManagedPolicy.fromAwsManagedPolicyName("AmazonSESFullAccess"),
-    //   ],
-    // });
 
     // ---- Pod Identity agent add-on ----
     const podIdentityAddon = new CfnAddon(
