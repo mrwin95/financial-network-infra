@@ -4,6 +4,7 @@ import { EksConstruct } from "./constructs/eks-construct";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
 import { configEnvironments } from "../config/environments";
 import { OidcProviderConstruct } from "./constructs/oidc-provider-construct";
+import { AlbIngressConstruct } from "./constructs/alb-construct";
 
 interface EksStackProps extends StackProps {
   envName: keyof typeof configEnvironments;
@@ -44,5 +45,21 @@ export class EksStack extends Stack {
     );
 
     oidc.node.addDependency(eksCluster);
+
+    const oidcProviderArn = StringParameter.valueForStringParameter(
+      this,
+      `/oidc/${props.envName}/oidc-arn`
+    );
+
+    const albController = new AlbIngressConstruct(
+      this,
+      `${props.envName}-alb-construct`,
+      {
+        envName: props.envName,
+        clusterName: `${props.envName}-eks-cluster`,
+        oidcProviderArn: oidcProviderArn,
+        vpcId: vpcId,
+      }
+    );
   }
 }
